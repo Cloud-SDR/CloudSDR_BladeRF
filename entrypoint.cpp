@@ -30,7 +30,7 @@
 #include "jansson/jansson.h"
 
 #include "entrypoint.h"
-#define DEBUG_DRIVER (0)
+#define DEBUG_DRIVER (1)
 
 char *driver_name ;
 void* acquisition_thread( void *params ) ;
@@ -188,9 +188,10 @@ LIBRARY_API int initLibrary(char *json_init_params,
                 case BLADERF_FPGA_UNKNOWN: continue;
                 }
                 rc = bladerf_load_fpga( tmp->bladerf_device, fpgaFile  );
-                if( rc == 0 ) {
+                if( rc != 0 ) {
                     continue ;
                 }
+
             }
         }
         sem_init(&tmp->mutex, 0, 0);
@@ -551,6 +552,7 @@ LIBRARY_API int finalizeRXEngine( int device_id ) {
  * @return
  */
 LIBRARY_API int setRxSampleRate( int device_id , int sample_rate) {
+    int rc ;
     if( DEBUG_DRIVER ) fprintf(stderr,"%s(%d,%d)\n", __func__, device_id,sample_rate);
     if( device_id >= device_count )
         return(RC_NOK);
@@ -560,9 +562,13 @@ LIBRARY_API int setRxSampleRate( int device_id , int sample_rate) {
         return(RC_OK);
     }
 
-    bladerf_set_sample_rate( dev->bladerf_device, BLADERF_MODULE_RX,
+    rc = bladerf_set_sample_rate( dev->bladerf_device, BLADERF_MODULE_RX,
                              sample_rate,
                              &dev->current_sample_rate);
+    if( rc != 0 ) {
+        fprintf( stderr, "%f(%d) error rc=%d\n", __func__, sample_rate, rc );
+        return( RC_NOK );
+    }
 
     unsigned int filter ;
     for( int f=0 ; f < dev->rates->enum_length ; f++ ) {
@@ -713,40 +719,41 @@ void* acquisition_thread( void *params ) {
     if( rc != 0 ) {
         goto cmd_calibrate_err;
     }
-    rc = bladerf_enable_module( bladerf_device, BLADERF_MODULE_RX, true);
-    if (rc != 0) {
-        fprintf( stderr,"doCalibrate failed bladerf_enable_module BLADERF_MODULE_RX: %s\n",  bladerf_strerror(rc));
-        goto cmd_calibrate_err;
-    }
 
-    /* Calibrate LPF Tuning Module */
+
+    // Calibrate LPF Tuning Module
     rc = bladerf_calibrate_dc( bladerf_device, BLADERF_DC_CAL_LPF_TUNING);
     if (rc != 0) {
         fprintf( stderr,"doCalibrate failed bladerf_calibrate_dc: %s\n",  bladerf_strerror(rc));
         goto cmd_calibrate_err;
     }
 
-    /* Calibrate TX LPF Filter */
+    // Calibrate TX LPF Filter
     rc = bladerf_calibrate_dc( bladerf_device, BLADERF_DC_CAL_TX_LPF);
     if (rc != 0) {
         fprintf( stderr,"doCalibrate failed bladerf_calibrate_dc: %s\n",  bladerf_strerror(rc));
         goto cmd_calibrate_err;
     }
 
-    /* Calibrate RX LPF Filter */
+    // Calibrate RX LPF Filter
     rc = bladerf_calibrate_dc( bladerf_device, BLADERF_DC_CAL_RX_LPF);
     if (rc != 0) {
         fprintf( stderr,"doCalibrate failed bladerf_calibrate_dc: %s\n",  bladerf_strerror(rc));
         goto cmd_calibrate_err;
     }
 
-    /* Calibrate RX VGA2 */
+    // Calibrate RX VGA2
     rc = bladerf_calibrate_dc( bladerf_device, BLADERF_DC_CAL_RXVGA2);
     if (rc != 0) {
         fprintf( stderr, "doCalibrate failed bladerf_calibrate_dc: %s\n",  bladerf_strerror(rc));
         goto cmd_calibrate_err;
     }
     //-------------------------
+
+    if (rc != 0) {
+        fprintf( stderr,"doCalibrate failed bladerf_enable_module BLADERF_MODULE_RX: %s\n",  bladerf_strerror(rc));
+        goto cmd_calibrate_err;
+    }
 
     bladerf_set_lpf_mode( bladerf_device, BLADERF_MODULE_RX, BLADERF_LPF_NORMAL);
     /* Configure the device's RX module for use with the sync interface.
